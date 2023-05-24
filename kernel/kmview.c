@@ -13,6 +13,11 @@
 #include <asm/text-patching.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+//#include <asm/msr.h>
+//#include <asm/msr-index.h>
+//#include <asm/proto.h>
+
+extern unsigned long *switch_test(void);
 
 #define dbgexp(fmt, exp)						\
 	printk(KERN_INFO "DBGEXP: " __FILE__ ":%d [%s]: [%s] " #exp ": " \
@@ -400,8 +405,9 @@ struct page *kmview_vmalloc_to_page(struct kmview *kmview,
 }
 
 /* The kmview must not be used anywhere! */
+/*
 static void patch_something(struct kmview *kmview) {
-	extern char ksys_write; /* this is the thing to patch */
+	extern char ksys_write; 
 
 	pud_t *pud;
 	pmd_t *pmd;
@@ -425,9 +431,31 @@ static void patch_something(struct kmview *kmview) {
 	page_addr = page_address(page);
 
 	mutex_lock(&text_mutex);
-	page_addr[addr & ~PAGE_MASK] = 0xcc; /* Write int3 */
+	page_addr[addr & ~PAGE_MASK] = 0xcc; 
 	mutex_unlock(&text_mutex);
 }
+*/
+
+
+static void patch_test_var(struct kmview_pgd *kmview_pgd, void * test_var){
+
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+
+	unsigned long address = (unsigned long)(test_var);
+
+	pgd = kmview_pgd->pgd;
+	p4d = p4d_offset(pgd, address);
+	pud = pud_offset(p4d, address);
+	pmd = pmd_offset(pud, address);
+	pte = pte_offset_kernel(pmd, address);
+
+	
+}
+
 
 static struct proc_dir_entry* kmview_stats_file;
 
@@ -442,14 +470,14 @@ static int kmview_stats_show(struct seq_file *m, void *v)
 	seq_printf(m, "kmviews:\n");
 	BUG_ON(list_empty(&kmview_list));
 	list_for_each_entry(item, &kmview_list, list) {
-		seq_printf(m, "\t%lu\tusers:%lu\n",
+		seq_printf(m, "\t%lu\tusers:%u\n",
 			   item->id, atomic_read(&item->users));
 	}
 	seq_printf(m, "\n");
 
 	seq_printf(m, "tasks:\n");
 	for_each_process(proc) {
-		seq_printf(m, "\t%lu\tmm: %p\tkmview: %lu\n",
+		seq_printf(m, "\t%u\tmm: %p\tkmview: %lu\n",
 			   proc->pid, proc->mm,
 			   proc->kmview_pgd->kmview->id);
 	}
@@ -481,6 +509,7 @@ subsys_initcall(kmview_stats_init);
 
 static struct proc_dir_entry* kmview_switch_pid_file;
 
+
 static ssize_t kmview_switch_pid_write(struct file *file, const char __user *buf,
 				       size_t count, loff_t *ppos)
 {
@@ -488,7 +517,7 @@ static ssize_t kmview_switch_pid_write(struct file *file, const char __user *buf
 	struct kmview *kmview, *old_kmview;
 	struct kmview_pgd *kmview_pgd;
 	struct task_struct *task;
-
+	unsigned long *test_var2;
 	long ret = kstrtoint_from_user(buf, count, 10, &pid);
 	if (ret != 0)
 		return ret;
@@ -524,8 +553,11 @@ static ssize_t kmview_switch_pid_write(struct file *file, const char __user *buf
 	kmview_put(old_kmview);
 
 	put_task_struct(task);
+//	test_var = 0;
 
-	printk(KERN_INFO "kmview: switch thread:%d to kmview:%lu\n", pid, kmview->id);
+	test_var2 = switch_test();
+ //       wrmsrl(MSR_LSTAR, (unsigned long)entry_SYSCALL_64_v2);
+	printk(KERN_INFO "kmview: switch thread:%d to kmview:%lu\n test_var: %llu", pid, kmview->id, *test_var2);
 
 	return count;
 }

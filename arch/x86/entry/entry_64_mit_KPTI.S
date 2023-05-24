@@ -46,8 +46,6 @@
 #ifdef CONFIG_PAGE_TAVKE_ISOLATION
 
 .macro SWITCH_TO_KERNEL_CR3 scratch_reg:req
-	ALTERNATIVE "jmp .Lend_\@", "", test_var 
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
 	mov	%cr3, \scratch_reg
 	ADJUST_KERNEL_CR3 \scratch_reg
 	mov	\scratch_reg, %cr3
@@ -58,8 +56,6 @@
 	PER_CPU_VAR(cpu_tlbstate) + TLB_STATE_user_pcid_flush_mask
 
 .macro SWITCH_TO_USER_CR3_NOSTACK scratch_reg:req scratch_reg2:req
- 	ALTERNATIVE "jmp .Lend_\@", "", test_var      
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
 	mov	%cr3, \scratch_reg
 
 	ALTERNATIVE "jmp .Lwrcr3_\@", "", X86_FEATURE_PCID
@@ -92,8 +88,6 @@
 .Lend_\@:
 .endm
 .macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
-	ALTERNATIVE "jmp .Ldone_\@", "", test_var
-	ALTERNATIVE "jmp .Ldone_\@", "", X86_FEATURE_PTI
 	movq	%cr3, \scratch_reg
 	movq	\scratch_reg, \save_reg
 	/*
@@ -111,9 +105,6 @@
 .endm
 
 .macro RESTORE_CR3 scratch_reg:req save_reg:req
-	ALTERNATIVE "jmp .Lend_\@", "", test_var
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
-
 	ALTERNATIVE "jmp .Lwrcr3_\@", "", X86_FEATURE_PCID
 
 	/*
@@ -1636,19 +1627,3 @@ SYM_CODE_START(rewind_stack_and_make_dead)
 SYM_CODE_END(rewind_stack_and_make_dead)
 .popsection
 
-.pushsection .data
-test_var:
-	.quad 0
-test_var2:
-	.quad 0
-.popsection
-
-.pushsection .text, "ax"
-SYM_FUNC_START(switch_test)
-//	movq $1, test_var(%rip)
-	movq $4231, test_var2(%rip)
-//	lea test_var2(%rip), %rax
-	lea test_var(rip), %rax
-	RET
-SYM_FUNC_END(switch_test)
-.popsection

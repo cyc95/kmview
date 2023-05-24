@@ -43,110 +43,15 @@
 
 #include "calling.h"
 
-#ifdef CONFIG_PAGE_TAVKE_ISOLATION
 
 .macro SWITCH_TO_KERNEL_CR3 scratch_reg:req
-	ALTERNATIVE "jmp .Lend_\@", "", test_var 
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
-	mov	%cr3, \scratch_reg
-	ADJUST_KERNEL_CR3 \scratch_reg
-	mov	\scratch_reg, %cr3
-.Lend_\@:
 .endm
-
-#define THIS_CPU_user_pcid_flush_mask   \
-	PER_CPU_VAR(cpu_tlbstate) + TLB_STATE_user_pcid_flush_mask
-
 .macro SWITCH_TO_USER_CR3_NOSTACK scratch_reg:req scratch_reg2:req
- 	ALTERNATIVE "jmp .Lend_\@", "", test_var      
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
-	mov	%cr3, \scratch_reg
-
-	ALTERNATIVE "jmp .Lwrcr3_\@", "", X86_FEATURE_PCID
-
-	/*
-	 * Test if the ASID needs a flush.
-	 */
-	movq	\scratch_reg, \scratch_reg2
-	andq	$(0x7FF), \scratch_reg		/* mask ASID */
-	bt	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	jnc	.Lnoflush_\@
-
-	/* Flush needed, clear the bit */
-	btr	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	movq	\scratch_reg2, \scratch_reg
-	jmp	.Lwrcr3_pcid_\@
-
-.Lnoflush_\@:
-	movq	\scratch_reg2, \scratch_reg
-	SET_NOFLUSH_BIT \scratch_reg
-
-.Lwrcr3_pcid_\@:
-	/* Flip the ASID to the user version */
-	orq	$(PTI_USER_PCID_MASK), \scratch_reg
-
-.Lwrcr3_\@:
-	/* Flip the PGD to the user version */
-	orq     $(PTI_USER_PGTABLE_MASK), \scratch_reg
-	mov	\scratch_reg, %cr3
-.Lend_\@:
 .endm
 .macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
-	ALTERNATIVE "jmp .Ldone_\@", "", test_var
-	ALTERNATIVE "jmp .Ldone_\@", "", X86_FEATURE_PTI
-	movq	%cr3, \scratch_reg
-	movq	\scratch_reg, \save_reg
-	/*
-	 * Test the user pagetable bit. If set, then the user page tables
-	 * are active. If clear CR3 already has the kernel page table
-	 * active.
-	 */
-	bt	$PTI_USER_PGTABLE_BIT, \scratch_reg
-	jnc	.Ldone_\@
-
-	ADJUST_KERNEL_CR3 \scratch_reg
-	movq	\scratch_reg, %cr3
-
-.Ldone_\@:
 .endm
-
 .macro RESTORE_CR3 scratch_reg:req save_reg:req
-	ALTERNATIVE "jmp .Lend_\@", "", test_var
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
 
-	ALTERNATIVE "jmp .Lwrcr3_\@", "", X86_FEATURE_PCID
-
-	/*
-	 * KERNEL pages can always resume with NOFLUSH as we do
-	 * explicit flushes.
-	 */
-	bt	$PTI_USER_PGTABLE_BIT, \save_reg
-	jnc	.Lnoflush_\@
-
-	/*
-	 * Check if there's a pending flush for the user ASID we're
-	 * about to set.
-	 */
-	movq	\save_reg, \scratch_reg
-	andq	$(0x7FF), \scratch_reg
-	bt	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	jnc	.Lnoflush_\@
-
-	btr	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	jmp	.Lwrcr3_\@
-
-.Lnoflush_\@:
-	SET_NOFLUSH_BIT \save_reg
-
-.Lwrcr3_\@:
-	/*
-	 * The CR3 write could be avoided when not changing its value,
-	 * but would require a CR3 read *and* a scratch register.
-	 */
-	movq	\save_reg, %cr3
-.Lend_\@:
-.endm
-#endif
 
 .code64
 .section .entry.text, "ax"
@@ -1636,19 +1541,3 @@ SYM_CODE_START(rewind_stack_and_make_dead)
 SYM_CODE_END(rewind_stack_and_make_dead)
 .popsection
 
-.pushsection .data
-test_var:
-	.quad 0
-test_var2:
-	.quad 0
-.popsection
-
-.pushsection .text, "ax"
-SYM_FUNC_START(switch_test)
-//	movq $1, test_var(%rip)
-	movq $4231, test_var2(%rip)
-//	lea test_var2(%rip), %rax
-	lea test_var(rip), %rax
-	RET
-SYM_FUNC_END(switch_test)
-.popsection

@@ -244,7 +244,7 @@ static int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
 		if (pmd)
 			mm_inc_nr_pmds(mm);
 		pmds[i] = pmd;
-	}
+	
 
 	if (failed) {
 		free_pmds(mm, pmds, count);

@@ -43,110 +43,13 @@
 
 #include "calling.h"
 
-#ifdef CONFIG_PAGE_TAVKE_ISOLATION
-
 .macro SWITCH_TO_KERNEL_CR3 scratch_reg:req
-	ALTERNATIVE "jmp .Lend_\@", "", test_var 
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
-	mov	%cr3, \scratch_reg
-	ADJUST_KERNEL_CR3 \scratch_reg
-	mov	\scratch_reg, %cr3
-.Lend_\@:
 .endm
-
-#define THIS_CPU_user_pcid_flush_mask   \
-	PER_CPU_VAR(cpu_tlbstate) + TLB_STATE_user_pcid_flush_mask
-
 .macro SWITCH_TO_USER_CR3_NOSTACK scratch_reg:req scratch_reg2:req
- 	ALTERNATIVE "jmp .Lend_\@", "", test_var      
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
-	mov	%cr3, \scratch_reg
-
-	ALTERNATIVE "jmp .Lwrcr3_\@", "", X86_FEATURE_PCID
-
-	/*
-	 * Test if the ASID needs a flush.
-	 */
-	movq	\scratch_reg, \scratch_reg2
-	andq	$(0x7FF), \scratch_reg		/* mask ASID */
-	bt	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	jnc	.Lnoflush_\@
-
-	/* Flush needed, clear the bit */
-	btr	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	movq	\scratch_reg2, \scratch_reg
-	jmp	.Lwrcr3_pcid_\@
-
-.Lnoflush_\@:
-	movq	\scratch_reg2, \scratch_reg
-	SET_NOFLUSH_BIT \scratch_reg
-
-.Lwrcr3_pcid_\@:
-	/* Flip the ASID to the user version */
-	orq	$(PTI_USER_PCID_MASK), \scratch_reg
-
-.Lwrcr3_\@:
-	/* Flip the PGD to the user version */
-	orq     $(PTI_USER_PGTABLE_MASK), \scratch_reg
-	mov	\scratch_reg, %cr3
-.Lend_\@:
 .endm
 .macro SAVE_AND_SWITCH_TO_KERNEL_CR3 scratch_reg:req save_reg:req
-	ALTERNATIVE "jmp .Ldone_\@", "", test_var
-	ALTERNATIVE "jmp .Ldone_\@", "", X86_FEATURE_PTI
-	movq	%cr3, \scratch_reg
-	movq	\scratch_reg, \save_reg
-	/*
-	 * Test the user pagetable bit. If set, then the user page tables
-	 * are active. If clear CR3 already has the kernel page table
-	 * active.
-	 */
-	bt	$PTI_USER_PGTABLE_BIT, \scratch_reg
-	jnc	.Ldone_\@
-
-	ADJUST_KERNEL_CR3 \scratch_reg
-	movq	\scratch_reg, %cr3
-
-.Ldone_\@:
 .endm
-
 .macro RESTORE_CR3 scratch_reg:req save_reg:req
-	ALTERNATIVE "jmp .Lend_\@", "", test_var
-	ALTERNATIVE "jmp .Lend_\@", "", X86_FEATURE_PTI
-
-	ALTERNATIVE "jmp .Lwrcr3_\@", "", X86_FEATURE_PCID
-
-	/*
-	 * KERNEL pages can always resume with NOFLUSH as we do
-	 * explicit flushes.
-	 */
-	bt	$PTI_USER_PGTABLE_BIT, \save_reg
-	jnc	.Lnoflush_\@
-
-	/*
-	 * Check if there's a pending flush for the user ASID we're
-	 * about to set.
-	 */
-	movq	\save_reg, \scratch_reg
-	andq	$(0x7FF), \scratch_reg
-	bt	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	jnc	.Lnoflush_\@
-
-	btr	\scratch_reg, THIS_CPU_user_pcid_flush_mask
-	jmp	.Lwrcr3_\@
-
-.Lnoflush_\@:
-	SET_NOFLUSH_BIT \save_reg
-
-.Lwrcr3_\@:
-	/*
-	 * The CR3 write could be avoided when not changing its value,
-	 * but would require a CR3 read *and* a scratch register.
-	 */
-	movq	\save_reg, %cr3
-.Lend_\@:
-.endm
-#endif
 
 .code64
 .section .entry.text, "ax"
@@ -189,7 +92,7 @@
  * with them due to bugs in both AMD and Intel CPUs.
  */
 
-SYM_CODE_START(entry_SYSCALL_64)
+SYM_CODE_START(entry_SYSCALL_64_v2)
 	UNWIND_HINT_ENTRY
 	ENDBR
 
@@ -199,7 +102,7 @@ SYM_CODE_START(entry_SYSCALL_64)
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rsp
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
 
-SYM_INNER_LABEL(entry_SYSCALL_64_safe_stack, SYM_L_GLOBAL)
+SYM_INNER_LABEL(entry_SYSCALL_64_safe_stack_v2, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 
 	/* Construct struct pt_regs on stack */
@@ -208,7 +111,7 @@ SYM_INNER_LABEL(entry_SYSCALL_64_safe_stack, SYM_L_GLOBAL)
 	pushq	%r11					/* pt_regs->flags */
 	pushq	$__USER_CS				/* pt_regs->cs */
 	pushq	%rcx					/* pt_regs->ip */
-SYM_INNER_LABEL(entry_SYSCALL_64_after_hwframe, SYM_L_GLOBAL)
+SYM_INNER_LABEL(entry_SYSCALL_64_after_hwframe_v2, SYM_L_GLOBAL)
 	pushq	%rax					/* pt_regs->orig_ax */
 
 	PUSH_AND_CLEAR_REGS rax=$-ENOSYS
@@ -325,14 +228,14 @@ syscall_return_via_sysret:
 
 	popq	%rdi
 	popq	%rsp
-SYM_INNER_LABEL(entry_SYSRETQ_unsafe_stack, SYM_L_GLOBAL)
+SYM_INNER_LABEL(entry_SYSRETQ_unsafe_stack_v2, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 	swapgs
 	sysretq
-SYM_INNER_LABEL(entry_SYSRETQ_end, SYM_L_GLOBAL)
+SYM_INNER_LABEL(entry_SYSRETQ_end_v2, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 	int3
-SYM_CODE_END(entry_SYSCALL_64)
+SYM_CODE_END(entry_SYSCALL_64_v2)
 
 /*
  * %rdi: prev task
@@ -340,7 +243,7 @@ SYM_CODE_END(entry_SYSCALL_64)
  */
 
 .pushsection .text, "ax"
-SYM_FUNC_START(__switch_to_asm)
+SYM_FUNC_START(__switch_to_asm_v2)
 	/*
 	 * Save callee-saved registers
 	 * This must match the order in inactive_task_frame
@@ -379,7 +282,7 @@ SYM_FUNC_START(__switch_to_asm)
 	popq	%rbp
 
 	jmp	__switch_to
-SYM_FUNC_END(__switch_to_asm)
+SYM_FUNC_END(__switch_to_asm_v2)
 .popsection
 
 /*
@@ -390,7 +293,7 @@ SYM_FUNC_END(__switch_to_asm)
  * r12: kernel thread arg
  */
 .pushsection .text, "ax"
-SYM_CODE_START(ret_from_fork)
+SYM_CODE_START(ret_from_fork_v2)
 	UNWIND_HINT_EMPTY
 	ANNOTATE_NOENDBR // copy_thread
 	movq	%rax, %rdi
@@ -417,7 +320,7 @@ SYM_CODE_START(ret_from_fork)
 	 */
 	movq	$0, RAX(%rsp)
 	jmp	2b
-SYM_CODE_END(ret_from_fork)
+SYM_CODE_END(ret_from_fork_v2)
 .popsection
 
 .macro DEBUG_ENTRY_ASSERT_IRQS_OFF
@@ -432,13 +335,13 @@ SYM_CODE_END(ret_from_fork)
 #endif
 .endm
 
-SYM_CODE_START_LOCAL(xen_error_entry)
+SYM_CODE_START_LOCAL(xen_error_entry_v2)
 	UNWIND_HINT_FUNC
 	PUSH_AND_CLEAR_REGS save_ret=1
 	ENCODE_FRAME_POINTER 8
 	UNTRAIN_RET
 	RET
-SYM_CODE_END(xen_error_entry)
+SYM_CODE_END(xen_error_entry_v2)
 
 /**
  * idtentry_body - Macro to emit code calling the C function
@@ -717,8 +620,8 @@ __irqentry_text_start:
 __irqentry_text_end:
 	ANNOTATE_NOENDBR
 
-SYM_CODE_START_LOCAL(common_interrupt_return)
-SYM_INNER_LABEL(swapgs_restore_regs_and_return_to_usermode, SYM_L_GLOBAL)
+SYM_CODE_START_LOCAL(common_interrupt_return_v2)
+SYM_INNER_LABEL(swapgs_restore_regs_and_return_to_usermode_v2, SYM_L_GLOBAL)
 	IBRS_EXIT
 #ifdef CONFIG_DEBUG_ENTRY
 	/* Assert that pt_regs indicates user mode. */
@@ -765,7 +668,7 @@ SYM_INNER_LABEL(swapgs_restore_regs_and_return_to_usermode, SYM_L_GLOBAL)
 	jmp	.Lnative_iret
 
 
-SYM_INNER_LABEL(restore_regs_and_return_to_kernel, SYM_L_GLOBAL)
+SYM_INNER_LABEL(restore_regs_and_return_to_kernel_v2, SYM_L_GLOBAL)
 #ifdef CONFIG_DEBUG_ENTRY
 	/* Assert that pt_regs indicates kernel mode. */
 	testb	$3, CS(%rsp)
@@ -780,7 +683,7 @@ SYM_INNER_LABEL(restore_regs_and_return_to_kernel, SYM_L_GLOBAL)
 	 * when returning from IPI handler.
 	 */
 #ifdef CONFIG_XEN_PV
-SYM_INNER_LABEL(early_xen_iret_patch, SYM_L_GLOBAL)
+SYM_INNER_LABEL(early_xen_iret_patch_v2, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 	.byte 0xe9
 	.long .Lnative_iret - (. + 4)
@@ -797,7 +700,7 @@ SYM_INNER_LABEL(early_xen_iret_patch, SYM_L_GLOBAL)
 	jnz	native_irq_return_ldt
 #endif
 
-SYM_INNER_LABEL(native_irq_return_iret, SYM_L_GLOBAL)
+SYM_INNER_LABEL(native_irq_return_iret_v2, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR // exc_double_fault
 	/*
 	 * This may fault.  Non-paranoid faults on return to userspace are
@@ -880,8 +783,8 @@ native_irq_return_ldt:
 	 */
 	jmp	native_irq_return_iret
 #endif
-SYM_CODE_END(common_interrupt_return)
-_ASM_NOKPROBE(common_interrupt_return)
+SYM_CODE_END(common_interrupt_return_v2)
+_ASM_NOKPROBE(common_interrupt_return_v2)
 
 /*
  * Reload gs selector with exception handling
@@ -889,7 +792,7 @@ _ASM_NOKPROBE(common_interrupt_return)
  *
  * Is in entry.text as it shouldn't be instrumented.
  */
-SYM_FUNC_START(asm_load_gs_index)
+SYM_FUNC_START(asm_load_gs_index_v2)
 	FRAME_BEGIN
 	swapgs
 .Lgs_change:
@@ -915,8 +818,8 @@ SYM_FUNC_START(asm_load_gs_index)
 
 	_ASM_EXTABLE(.Lgs_change, .Lbad_gs)
 
-SYM_FUNC_END(asm_load_gs_index)
-EXPORT_SYMBOL(asm_load_gs_index)
+SYM_FUNC_END(asm_load_gs_index_v2)
+EXPORT_SYMBOL(asm_load_gs_index_v2)
 
 #ifdef CONFIG_XEN_PV
 /*
@@ -934,7 +837,7 @@ EXPORT_SYMBOL(asm_load_gs_index)
  *
  * C calling convention: exc_xen_hypervisor_callback(struct *pt_regs)
  */
-SYM_CODE_START_LOCAL(exc_xen_hypervisor_callback)
+SYM_CODE_START_LOCAL(exc_xen_hypervisor_callback_v2)
 
 /*
  * Since we don't modify %rdi, evtchn_do_upall(struct *pt_regs) will
@@ -947,7 +850,7 @@ SYM_CODE_START_LOCAL(exc_xen_hypervisor_callback)
 	call	xen_pv_evtchn_do_upcall
 
 	jmp	error_return
-SYM_CODE_END(exc_xen_hypervisor_callback)
+SYM_CODE_END(exc_xen_hypervisor_callback_v2)
 
 /*
  * Hypervisor uses this for application faults while it executes.
@@ -962,7 +865,7 @@ SYM_CODE_END(exc_xen_hypervisor_callback)
  * We distinguish between categories by comparing each saved segment register
  * with its current contents: any discrepancy means we in category 1.
  */
-SYM_CODE_START(xen_failsafe_callback)
+SYM_CODE_START(xen_failsafe_callback_v2)
 	UNWIND_HINT_EMPTY
 	ENDBR
 	movl	%ds, %ecx
@@ -993,7 +896,7 @@ SYM_CODE_START(xen_failsafe_callback)
 	PUSH_AND_CLEAR_REGS
 	ENCODE_FRAME_POINTER
 	jmp	error_return
-SYM_CODE_END(xen_failsafe_callback)
+SYM_CODE_END(xen_failsafe_callback_v2)
 #endif /* CONFIG_XEN_PV */
 
 /*
@@ -1009,7 +912,7 @@ SYM_CODE_END(xen_failsafe_callback)
  * R14 - old CR3
  * R15 - old SPEC_CTRL
  */
-SYM_CODE_START_LOCAL(paranoid_entry)
+SYM_CODE_START_LOCAL(paranoid_entry_v2)
 	UNWIND_HINT_FUNC
 	PUSH_AND_CLEAR_REGS save_ret=1
 	ENCODE_FRAME_POINTER 8
@@ -1081,7 +984,7 @@ SYM_CODE_START_LOCAL(paranoid_entry)
 	UNTRAIN_RET
 
 	RET
-SYM_CODE_END(paranoid_entry)
+SYM_CODE_END(paranoid_entry_v2)
 
 /*
  * "Paranoid" exit path from exception stack.  This is invoked
@@ -1105,7 +1008,7 @@ SYM_CODE_END(paranoid_entry)
  * R14 - old CR3
  * R15 - old SPEC_CTRL
  */
-SYM_CODE_START_LOCAL(paranoid_exit)
+SYM_CODE_START_LOCAL(paranoid_exit_v2)
 	UNWIND_HINT_REGS
 
 	/*
@@ -1139,12 +1042,12 @@ SYM_CODE_START_LOCAL(paranoid_exit)
 	/* We are returning to a context with user GSBASE */
 	swapgs
 	jmp		restore_regs_and_return_to_kernel
-SYM_CODE_END(paranoid_exit)
+SYM_CODE_END(paranoid_exit_v2)
 
 /*
  * Switch GS and CR3 if needed.
  */
-SYM_CODE_START_LOCAL(error_entry)
+SYM_CODE_START_LOCAL(error_entry_v2)
 	UNWIND_HINT_FUNC
 
 	PUSH_AND_CLEAR_REGS save_ret=1
@@ -1228,15 +1131,15 @@ SYM_CODE_START_LOCAL(error_entry)
 	call	fixup_bad_iret
 	mov	%rax, %rdi
 	jmp	.Lerror_entry_from_usermode_after_swapgs
-SYM_CODE_END(error_entry)
+SYM_CODE_END(error_entry_v2)
 
-SYM_CODE_START_LOCAL(error_return)
+SYM_CODE_START_LOCAL(error_return_v2)
 	UNWIND_HINT_REGS
 	DEBUG_ENTRY_ASSERT_IRQS_OFF
 	testb	$3, CS(%rsp)
 	jz	restore_regs_and_return_to_kernel
 	jmp	swapgs_restore_regs_and_return_to_usermode
-SYM_CODE_END(error_return)
+SYM_CODE_END(error_return_v2)
 
 /*
  * Runs on exception stack.  Xen PV does not go through this path at all,
@@ -1246,7 +1149,7 @@ SYM_CODE_END(error_return)
  *	%r14: Used to save/restore the CR3 of the interrupted context
  *	      when PAGE_TABLE_ISOLATION is in use.  Do not clobber.
  */
-SYM_CODE_START(asm_exc_nmi)
+SYM_CODE_START(asm_exc_nmi_v2)
 	UNWIND_HINT_IRET_REGS
 	ENDBR
 
@@ -1607,23 +1510,23 @@ nmi_restore:
 	 * about espfix64 on the way back to kernel mode.
 	 */
 	iretq
-SYM_CODE_END(asm_exc_nmi)
+SYM_CODE_END(asm_exc_nmi_v2)
 
 #ifndef CONFIG_IA32_EMULATION
 /*
  * This handles SYSCALL from 32-bit code.  There is no way to program
  * MSRs to fully disable 32-bit SYSCALL.
  */
-SYM_CODE_START(ignore_sysret)
+SYM_CODE_START(ignore_sysret_v2)
 	UNWIND_HINT_EMPTY
 	ENDBR
 	mov	$-ENOSYS, %eax
 	sysretl
-SYM_CODE_END(ignore_sysret)
+SYM_CODE_END(ignore_sysret_v2)
 #endif
 
 .pushsection .text, "ax"
-SYM_CODE_START(rewind_stack_and_make_dead)
+SYM_CODE_START(rewind_stack_and_make_dead_v2)
 	UNWIND_HINT_FUNC
 	/* Prevent any naive code from trying to unwind to our caller. */
 	xorl	%ebp, %ebp
@@ -1633,22 +1536,6 @@ SYM_CODE_START(rewind_stack_and_make_dead)
 	UNWIND_HINT_REGS
 
 	call	make_task_dead
-SYM_CODE_END(rewind_stack_and_make_dead)
+SYM_CODE_END(rewind_stack_and_make_dead_v2)
 .popsection
 
-.pushsection .data
-test_var:
-	.quad 0
-test_var2:
-	.quad 0
-.popsection
-
-.pushsection .text, "ax"
-SYM_FUNC_START(switch_test)
-//	movq $1, test_var(%rip)
-	movq $4231, test_var2(%rip)
-//	lea test_var2(%rip), %rax
-	lea test_var(rip), %rax
-	RET
-SYM_FUNC_END(switch_test)
-.popsection
