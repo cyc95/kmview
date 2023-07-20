@@ -322,6 +322,23 @@ SECTIONS
 		*(.altinstr_replacement)
 	}
 
+	/*
+	 * struct alt_inst entries. From the header (kmview_alternative.h):
+	 * "Alternative instructions for different CPU types or capabilities"
+	 * Think locking instructions on spinlocks.
+	 */
+	. = ALIGN(8);
+	.kmview_altinstructions : AT(ADDR(.kmview_altinstructions) - LOAD_OFFSET) {
+		__kmview_alt_instructions = .;
+		*(.kmview_altinstructions)
+		__kmview_alt_instructions_end = .;
+	}
+
+	.kmview_altinstr_replacement : AT(ADDR(.kmview_altinstr_replacement) - LOAD_OFFSET) {
+		*(.kmview_altinstr_replacement)
+	}
+
+
 	. = ALIGN(8);
 	.apicdrivers : AT(ADDR(.apicdrivers) - LOAD_OFFSET) {
 		__apicdrivers = .;

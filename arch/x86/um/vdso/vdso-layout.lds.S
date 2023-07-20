@@ -38,6 +38,9 @@ SECTIONS
 	.altinstructions	: { *(.altinstructions) }
 	.altinstr_replacement	: { *(.altinstr_replacement) }
 
+	.kmview_altinstructions	: { *(.kmview_altinstructions) }
+	.kmview_altinstr_replacement	: { *(.kmview_altinstr_replacement) }
+	
 	/*
 	 * Align the actual code well away from the non-instruction data.
 	 * This is the best thing for the I-cache.

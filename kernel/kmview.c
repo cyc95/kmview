@@ -528,7 +528,7 @@ static ssize_t kmview_switch_pid_write(struct file *file, const char __user *buf
 		return -ENOMEM;
 
 	/* patch_something(kmview); */
-
+	kmview_apply_alternatives(kmview);
 	/* Get the task by pid */
 	rcu_read_lock();
 	task = find_task_by_vpid(pid);
